@@ -1,0 +1,563 @@
+<!doctype html>
+<!--
+=====================================================================
+  WinterQuiz Live – Version für GitHub Pages + Firebase (Firestore)
+  Firebase-Projekt: winterquiz-live (Konfiguration ist bereits eingetragen)
+
+  NOCH ZU ERLEDIGEN (einmalig)
+  1. Sicherheit > Authentication > Anmeldemethode > "Anonym" aktivieren.
+  2. Sicherheit > Authentication > Einstellungen > Autorisierte Domains
+     > "Domain hinzufügen": DEIN-GITHUB-NAME.github.io
+  3. Firestore > Regeln: Block "FIRESTORE-REGELN" unten einfügen
+     > Veröffentlichen.
+  4. Diese Datei (index.html) ins Hauptverzeichnis des GitHub-Repositorys
+     legen. Dann auf GitHub: Settings > Pages > Source: "Deploy from a
+     branch" > Branch: main, Ordner: / (root) > Save.
+     Nach 1–2 Minuten läuft das Quiz unter
+     https://DEIN-GITHUB-NAME.github.io/REPOSITORY-NAME/
+
+  HINWEISE
+  - GitHub Pages ist im kostenlosen GitHub-Tarif nur für ÖFFENTLICHE
+    Repositories verfügbar. Fragen und Lösungen sind dann einsehbar.
+  - Die Firebase-Werte (apiKey usw.) sind keine Geheimnisse; sie sind
+    bei jeder Firebase-Web-App im Browser sichtbar. Geschützt wird die
+    Datenbank über die Regeln unten.
+
+  FIRESTORE-REGELN:
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /games/{gameId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.hostUid == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.hostUid == request.auth.uid;
+
+      match /players/{playerId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null && request.auth.uid == playerId
+          && request.resource.data.keys().hasOnly(['name', 'score', 'joinedAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 22
+          && request.resource.data.score == 0;
+        allow update: if request.auth != null && request.auth.uid == playerId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['score'])
+          && request.resource.data.score >= resource.data.score
+          && request.resource.data.score - resource.data.score <= 1000;
+      }
+
+      match /answers/{answerId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null
+          && request.resource.data.playerId == request.auth.uid
+          && answerId == string(request.resource.data.question) + '_' + request.auth.uid;
+      }
+    }
+  }
+}
+=====================================================================
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WinterQuiz Live</title>
+<style>
+:root{--red:#b91c1c;--red-dark:#7f1414;--green:#166534;--green-dark:#0b3d20;--gold:#fbbf24;--ink:#173024}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;color:var(--ink);min-height:100vh;overflow-x:hidden;
+  background:radial-gradient(ellipse at top,#1f5c43 0%,#0f2a1f 60%,#08170f 100%)}
+#snow{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
+.flake{position:absolute;top:-40px;color:#fff;opacity:.85;animation:fall linear infinite;user-select:none}
+@keyframes fall{to{transform:translateY(112vh) translateX(40px) rotate(360deg)}}
+header{position:relative;z-index:1;text-align:center;padding:22px 14px 4px;color:#fff}
+h1{margin:0;font-size:clamp(2rem,6vw,3.6rem);text-shadow:0 4px 18px #0008}
+.sub{color:var(--gold);font-weight:700}
+main{position:relative;z-index:1;width:min(1100px,94%);margin:16px auto 70px}
+.card{background:#fffffff2;border-radius:24px;padding:clamp(18px,4vw,34px);box-shadow:0 20px 60px #0006}
+.hidden{display:none!important}
+.center{text-align:center}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.between{justify-content:space-between}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+button,input{font:inherit;border-radius:14px;padding:14px 18px}
+input{border:2px solid #cfdfd9;background:#fff;flex:1;min-width:150px}
+button{border:0;color:#fff;background:var(--green);font-weight:800;cursor:pointer;box-shadow:0 5px 0 var(--green-dark)}
+button:active{transform:translateY(3px);box-shadow:0 2px 0 var(--green-dark)}
+button:disabled{opacity:.55;cursor:default}
+.btn-red{background:var(--red);box-shadow:0 5px 0 var(--red-dark)}
+.big-btn{font-size:1.25rem;padding:20px}
+.pill{display:inline-block;background:var(--green);color:#fff;padding:6px 14px;border-radius:999px;font-weight:800}
+.status{min-height:26px;font-weight:700}
+.error{color:var(--red)}
+.muted{color:#5b6e66}
+.code{font-size:clamp(2.6rem,9vw,5.5rem);font-weight:900;letter-spacing:.12em;color:var(--red);line-height:1.1}
+.qr{background:#fff;padding:12px;border-radius:16px;border:4px solid var(--gold)}
+.join-url{word-break:break-all;font-weight:700;color:var(--green)}
+.players{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.player{background:#eef7f2;border:1px solid #cde3d8;padding:8px 14px;border-radius:999px;font-weight:700;animation:pop .3s ease}
+@keyframes pop{from{transform:scale(.6);opacity:0}}
+.timer{font-size:2rem;font-weight:900;min-width:90px;text-align:center;background:var(--red);color:#fff;border-radius:999px;padding:4px 16px}
+.question{text-align:center;font-size:clamp(1.4rem,3.6vw,2.6rem);margin:18px 0}
+.photo{display:block;max-width:100%;max-height:38vh;margin:10px auto;border-radius:18px;object-fit:contain;box-shadow:0 8px 25px #0003}
+.tile{color:#fff;border-radius:16px;padding:18px;min-height:88px;display:flex;align-items:center;gap:14px;font-size:clamp(1rem,2.4vw,1.4rem);font-weight:800;text-align:left}
+.tile .shape{font-size:1.6rem}
+.c0{background:#c0262d;box-shadow:0 5px 0 #7f1414}.c1{background:#1d5fd1;box-shadow:0 5px 0 #123f8c}
+.c2{background:#b8860b;box-shadow:0 5px 0 #7a5807}.c3{background:#1f7a3d;box-shadow:0 5px 0 #0b3d20}
+.tile.chosen{outline:5px solid var(--gold)}
+.tile.dim{opacity:.35}
+.answer-count{font-size:1.3rem;font-weight:800}
+.reveal{background:#eef7f2;border-radius:16px;padding:14px;margin:10px auto;max-width:650px;font-size:1.2rem}
+.leader{list-style:none;padding:0;max-width:650px;margin:16px auto}
+.leader li{display:flex;justify-content:space-between;margin:8px 0;padding:12px 18px;background:#fff;border:1px solid #dde9e3;border-radius:14px;font-size:1.15rem}
+.leader li.me{border:3px solid var(--gold)}
+.feedback{font-size:1.6rem;font-weight:900;margin:8px 0}
+.podium{display:flex;justify-content:center;align-items:flex-end;gap:12px;margin:26px auto;max-width:700px}
+.step{flex:1;border-radius:18px 18px 6px 6px;padding:14px 8px;font-weight:900;color:#2b2100;display:flex;flex-direction:column;align-items:center;gap:4px;animation:rise .9s ease both}
+.step .medal{font-size:2.4rem}
+.p1{height:230px;background:linear-gradient(#ffe27a,#f5b70a);animation-delay:1.2s}
+.p2{height:175px;background:linear-gradient(#f1f3f5,#c3c8cf);animation-delay:.6s}
+.p3{height:140px;background:linear-gradient(#e7a56b,#b8692d)}
+@keyframes rise{from{transform:translateY(60px);opacity:0}}
+.music{position:fixed;right:14px;bottom:14px;z-index:5;border-radius:999px;background:var(--red);box-shadow:0 4px 0 var(--red-dark)}
+@media(max-width:700px){.grid2{grid-template-columns:1fr}.tile{min-height:64px}.timer{font-size:1.5rem}}
+</style>
+</head>
+<body>
+<div id="snow"></div>
+<button id="musicBtn" class="music">🎵 Musik an</button>
+
+<header>
+  <h1>🎄 WinterQuiz Live</h1>
+  <div class="sub">Die festliche Team-Quizshow</div>
+</header>
+
+<main>
+  <section id="home" class="card center">
+    <h2>Willkommen!</h2>
+    <div class="grid2">
+      <button id="hostBtn" class="big-btn">🎅 Spiel hosten</button>
+      <button id="joinBtn" class="big-btn btn-red">🎁 Spiel beitreten</button>
+    </div>
+    <p id="homeStatus" class="status"></p>
+  </section>
+
+  <section id="join" class="card hidden">
+    <h2>Spiel beitreten</h2>
+    <div class="row">
+      <input id="joinCode" maxlength="6" placeholder="Spielcode" autocomplete="off" autocapitalize="characters">
+      <input id="playerName" maxlength="22" placeholder="Dein Name" autocomplete="off">
+      <button id="joinGameBtn">Los geht's</button>
+    </div>
+    <p id="joinStatus" class="status"></p>
+  </section>
+
+  <section id="wait" class="card center hidden">
+    <h2>Du bist dabei, <span id="waitName"></span>! 🎉</h2>
+    <p class="muted">Schau auf den Beamer – gleich geht es los.</p>
+    <div style="font-size:4rem">⛄</div>
+  </section>
+
+  <section id="lobby" class="card hidden">
+    <div class="row between">
+      <div>
+        <span class="pill">LIVE</span>
+        <div class="code" id="gameCode">------</div>
+        <div>QR-Code scannen oder Link öffnen:</div>
+        <div class="join-url" id="joinUrl"></div>
+      </div>
+      <div id="qrcode" class="qr"></div>
+    </div>
+    <h3><span id="playerCount">0</span> / 20 Spieler</h3>
+    <div id="playerList" class="players"></div>
+    <p class="center"><button id="startBtn" class="big-btn" disabled>Quiz starten</button></p>
+  </section>
+
+  <section id="hostQuestion" class="card hidden">
+    <div class="row between">
+      <span id="hRound" class="pill"></span>
+      <span id="hTimer" class="timer">20</span>
+      <span id="hCount" class="answer-count"></span>
+    </div>
+    <img id="hPhoto" class="photo hidden" alt="Bild zur Quizfrage">
+    <h2 id="hQuestion" class="question"></h2>
+    <div id="hAnswers" class="grid2"></div>
+    <p class="center" style="margin-top:22px"><button id="revealBtn">Auflösung & Zwischenstand</button></p>
+  </section>
+
+  <section id="playerQuestion" class="card hidden">
+    <div class="row between">
+      <span id="pRound" class="pill"></span>
+      <span id="pTimer" class="timer">20</span>
+    </div>
+    <img id="pPhoto" class="photo hidden" alt="Bild zur Quizfrage">
+    <h2 id="pQuestion" class="question"></h2>
+    <div id="pAnswers" class="grid2"></div>
+    <p id="playerStatus" class="status center"></p>
+  </section>
+
+  <section id="ranking" class="card center hidden">
+    <h2>🏆 Zwischenstand</h2>
+    <div id="feedback" class="feedback"></div>
+    <div id="reveal" class="reveal"></div>
+    <ol id="midBoard" class="leader"></ol>
+    <button id="nextBtn" class="big-btn hidden">Nächste Frage</button>
+  </section>
+
+  <section id="results" class="card center hidden">
+    <h2>🎅 Siegerpodest</h2>
+    <div id="podium" class="podium"></div>
+    <ol id="finalBoard" class="leader"></ol>
+    <p class="muted">Frohe Weihnachten und danke fürs Mitspielen! 🎄</p>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, where, orderBy, getDocs, serverTimestamp, increment }
+  from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+/* =========================================================
+   1) FIREBASE-KONFIGURATION (Projekt: winterquiz-live)
+   ========================================================= */
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyDW4RupXZCHWitPAepRTjDkU62dmM7oZsQ",
+  authDomain:        "winterquiz-live.firebaseapp.com",
+  projectId:         "winterquiz-live",
+  storageBucket:     "winterquiz-live.firebasestorage.app",
+  messagingSenderId: "113020063739",
+  appId:             "1:113020063739:web:27b745c2ac57eb5293855e"
+};
+
+/* =========================================================
+   2) QUIZFRAGEN – hier anpassen
+   type:  Kategorie-Label (z. B. Weihnachten, Firma, Insider, Foto)
+   q:     Frage
+   photo: optional – Bild-URL oder Dateiname im Repository
+          (z. B. 'teamfoto-1.jpg', neben index.html hochladen)
+   a:     genau 4 Antworten
+   c:     richtige Antwort (0 = erste, 1 = zweite, 2 = dritte, 3 = vierte)
+   ========================================================= */
+const placeholderPhoto = label => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675"><rect width="1200" height="675" fill="#166534"/>` +
+  `<rect x="30" y="30" width="1140" height="615" fill="none" stroke="#fbbf24" stroke-width="10"/>` +
+  `<text x="600" y="320" font-family="Arial" font-size="64" font-weight="bold" fill="#fff" text-anchor="middle">${label}</text>` +
+  `<text x="600" y="390" font-family="Arial" font-size="32" fill="#fff" text-anchor="middle">Platzhalter – eigenes Bild eintragen</text></svg>`);
+
+const QUESTIONS = [
+  { type: 'Weihnachten', q: 'Wie nennt man den 6. Dezember in der Schweiz?', a: ['Dreikönigstag', 'Samichlaus', 'Lichterfest', 'Wintersonntag'], c: 1 },
+  { type: 'Firma',       q: 'Welcher Wert beschreibt gute Teamarbeit am besten?', a: ['Transparenz', 'Silodenken', 'Abwarten', 'Zufall'], c: 0 },
+  { type: 'Insider',     q: 'Welcher Satz fällt in unseren Meetings am häufigsten?', a: ['Kurze Frage …', 'Das ist out of scope', 'Ich teile kurz meinen Screen', 'Hört ihr mich?'], c: 2 },
+  { type: 'Foto',        q: 'Bei welchem Anlass ist dieses Foto entstanden?', photo: placeholderPhoto('TEAMFOTO 1'), a: ['Team-Event', 'Kundenworkshop', 'Sommerfest', 'Projektstart'], c: 0 },
+  { type: 'Weihnachten', q: 'Wie viele Türchen hat ein klassischer Adventskalender?', a: ['12', '20', '24', '25'], c: 2 },
+  { type: 'Insider',     q: 'Was rettet bei uns jeden langen Workshop?', a: ['Kaffee', 'Mehr Folien', 'Ein zweiter Termin', 'Stillarbeit'], c: 0 },
+  { type: 'Foto',        q: 'Wo wurde dieses Bild aufgenommen?', photo: placeholderPhoto('TEAMFOTO 2'), a: ['Im Büro', 'Beim Kunden', 'Auf dem Weihnachtsmarkt', 'In den Bergen'], c: 0 },
+  { type: 'Weihnachten', q: 'Welches Gewürz gehört klassisch in Weihnachtsgebäck?', a: ['Zimt', 'Basilikum', 'Curry', 'Dill'], c: 0 }
+];
+const QUESTION_TIME = 20;   // Sekunden pro Frage
+const MAX_PLAYERS   = 20;
+
+/* ========================================================= */
+const SHAPES = ['▲', '◆', '●', '■'];
+const $ = s => document.querySelector(s);
+const show = id => { document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden')); $('#' + id).classList.remove('hidden'); };
+const msg = (sel, text, bad = false) => { const e = $(sel); const c = e.classList.contains('center'); e.textContent = text; e.className = 'status' + (bad ? ' error' : '') + (c ? ' center' : ''); };
+
+let db, user, gameId, isHost = false, players = [], lastKey = '', timerHandle, unsubAnswers, qStart = 0, answered = false, myResult = null;
+
+async function init() {
+  if (db) return;
+  const app = initializeApp(FIREBASE_CONFIG);
+  db = getFirestore(app);
+  user = (await signInAnonymously(getAuth(app))).user;
+}
+
+function friendly(e) {
+  const c = (e && e.code) || '';
+  if (c.includes('unauthorized-domain')) return 'Diese Domain ist in Firebase nicht freigegeben: Authentication > Einstellungen > Autorisierte Domains > "' + location.hostname + '" hinzufügen.';
+  if (c.includes('admin-restricted-operation') || c.includes('operation-not-allowed')) return 'Anonyme Anmeldung ist nicht aktiviert: Authentication > Anmeldemethode > Anonym aktivieren.';
+  if (c.includes('permission-denied')) return 'Keine Berechtigung: Bitte die Firestore-Regeln aus dem Dateikopf einfügen und veröffentlichen.';
+  if (c.includes('api-key')) return 'Der apiKey in FIREBASE_CONFIG ist ungültig. Bitte die Werte prüfen.';
+  return e.message;
+}
+
+function newCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+/* ---------- HOST ---------- */
+$('#hostBtn').onclick = async () => {
+  try {
+    msg('#homeStatus', 'Spiel wird erstellt …');
+    await init();
+    isHost = true;
+    gameId = newCode();
+    await setDoc(doc(db, 'games', gameId), { hostUid: user.uid, state: 'lobby', question: 0, createdAt: serverTimestamp() });
+    openLobby();
+    watchGame();
+  } catch (e) { msg('#homeStatus', friendly(e), true); }
+};
+
+function openLobby() {
+  show('lobby');
+  const url = new URL(location.href); url.search = '?game=' + gameId; url.hash = '';
+  $('#gameCode').textContent = gameId;
+  $('#joinUrl').textContent = url.toString();
+  $('#qrcode').innerHTML = '';
+  new QRCode($('#qrcode'), { text: url.toString(), width: 190, height: 190 });
+  onSnapshot(collection(db, 'games', gameId, 'players'), snap => {
+    players = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    $('#playerCount').textContent = players.length;
+    const list = $('#playerList'); list.innerHTML = '';
+    players.forEach(p => { const s = document.createElement('span'); s.className = 'player'; s.textContent = '🎄 ' + p.name; list.appendChild(s); });
+    $('#startBtn').disabled = players.length === 0;
+  });
+}
+
+$('#startBtn').onclick = () => updateDoc(doc(db, 'games', gameId), { state: 'question', question: 0 });
+$('#revealBtn').onclick = () => updateDoc(doc(db, 'games', gameId), { state: 'ranking' });
+$('#nextBtn').onclick = async () => {
+  const g = (await getDoc(doc(db, 'games', gameId))).data();
+  if (g.question >= QUESTIONS.length - 1) await updateDoc(doc(db, 'games', gameId), { state: 'results' });
+  else await updateDoc(doc(db, 'games', gameId), { state: 'question', question: g.question + 1 });
+};
+
+/* ---------- SPIELER ---------- */
+$('#joinBtn').onclick = () => show('join');
+
+$('#joinGameBtn').onclick = async () => {
+  try {
+    const code = $('#joinCode').value.trim().toUpperCase();
+    const name = $('#playerName').value.trim();
+    if (!code || !name) throw new Error('Bitte Spielcode und Namen eingeben.');
+    msg('#joinStatus', 'Verbinde …');
+    await init();
+    gameId = code;
+    const g = await getDoc(doc(db, 'games', gameId));
+    if (!g.exists()) throw new Error('Spiel nicht gefunden. Bitte Code prüfen.');
+    const ps = await getDocs(collection(db, 'games', gameId, 'players'));
+    const already = ps.docs.some(d => d.id === user.uid);
+    if (!already) {
+      if (g.data().state !== 'lobby') throw new Error('Das Spiel läuft bereits.');
+      if (ps.size >= MAX_PLAYERS) throw new Error('Das Spiel ist voll (max. ' + MAX_PLAYERS + ' Spieler).');
+      await setDoc(doc(db, 'games', gameId, 'players', user.uid), { name, score: 0, joinedAt: serverTimestamp() });
+    }
+    localStorage.setItem('wq_name', name);
+    $('#waitName').textContent = name;
+    show('wait');
+    watchGame();
+  } catch (e) { msg('#joinStatus', friendly(e), true); }
+};
+
+/* ---------- SPIELSTEUERUNG ---------- */
+function watchGame() {
+  onSnapshot(doc(db, 'games', gameId), snap => {
+    if (!snap.exists()) return;
+    const g = snap.data();
+    const key = g.state + ':' + g.question;
+    if (key === lastKey) return;
+    lastKey = key;
+    if (g.state === 'question') isHost ? hostQuestion(g.question) : playerQuestion(g.question);
+    if (g.state === 'ranking') showRanking(g.question, false);
+    if (g.state === 'results') showRanking(g.question, true);
+  });
+}
+
+function timeLeft() { return Math.max(0, QUESTION_TIME - (Date.now() - qStart) / 1000); }
+
+function startTimer(sel, onEnd) {
+  clearInterval(timerHandle);
+  qStart = Date.now();
+  const tick = () => {
+    const left = Math.ceil(timeLeft());
+    $(sel).textContent = left;
+    if (left <= 0) { clearInterval(timerHandle); onEnd && onEnd(); }
+  };
+  tick();
+  timerHandle = setInterval(tick, 250);
+}
+
+function setPhoto(sel, q) {
+  const img = $(sel);
+  img.classList.toggle('hidden', !q.photo);
+  if (q.photo) img.src = q.photo;
+}
+
+function hostQuestion(i) {
+  const q = QUESTIONS[i];
+  show('hostQuestion');
+  $('#hRound').textContent = `${q.type} · Frage ${i + 1}/${QUESTIONS.length}`;
+  $('#hQuestion').textContent = q.q;
+  setPhoto('#hPhoto', q);
+  const box = $('#hAnswers'); box.innerHTML = '';
+  q.a.forEach((text, n) => {
+    const t = document.createElement('div');
+    t.className = 'tile c' + n;
+    t.innerHTML = `<span class="shape">${SHAPES[n]}</span>`;
+    t.append(text);
+    box.appendChild(t);
+  });
+  if (unsubAnswers) unsubAnswers();
+  unsubAnswers = onSnapshot(query(collection(db, 'games', gameId, 'answers'), where('question', '==', i)), snap => {
+    $('#hCount').textContent = `${snap.size}/${players.length} Antworten`;
+  });
+  startTimer('#hTimer');
+}
+
+function playerQuestion(i) {
+  const q = QUESTIONS[i];
+  answered = false; myResult = null;
+  show('playerQuestion');
+  $('#pRound').textContent = `Frage ${i + 1}/${QUESTIONS.length}`;
+  $('#pQuestion').textContent = q.q;
+  setPhoto('#pPhoto', q);
+  msg('#playerStatus', '');
+  const box = $('#pAnswers'); box.innerHTML = '';
+  q.a.forEach((text, n) => {
+    const b = document.createElement('button');
+    b.className = 'tile c' + n;
+    b.innerHTML = `<span class="shape">${SHAPES[n]}</span>`;
+    b.append(text);
+    b.onclick = () => answer(i, n, b);
+    box.appendChild(b);
+  });
+  startTimer('#pTimer', () => {
+    if (!answered) { answered = true; lockAnswers(null); msg('#playerStatus', '⏰ Zeit abgelaufen!'); myResult = { correct: false, points: 0, late: true }; }
+  });
+}
+
+function lockAnswers(chosen) {
+  document.querySelectorAll('#pAnswers .tile').forEach(b => {
+    b.disabled = true;
+    if (chosen && b !== chosen) b.classList.add('dim');
+  });
+  if (chosen) chosen.classList.add('chosen');
+}
+
+async function answer(i, choice, btn) {
+  if (answered) return;
+  answered = true;
+  lockAnswers(btn);
+  const correct = choice === QUESTIONS[i].c;
+  const points = correct ? Math.round(500 + 500 * timeLeft() / QUESTION_TIME) : 0;
+  myResult = { correct, points };
+  msg('#playerStatus', 'Antwort gespeichert – gleich kommt die Auflösung! 🎁');
+  try {
+    await setDoc(doc(db, 'games', gameId, 'answers', `${i}_${user.uid}`), { playerId: user.uid, question: i, choice, points });
+    if (points) await updateDoc(doc(db, 'games', gameId, 'players', user.uid), { score: increment(points) });
+  } catch (e) { msg('#playerStatus', 'Antwort konnte nicht gespeichert werden: ' + friendly(e), true); }
+}
+
+async function getScores() {
+  const snap = await getDocs(query(collection(db, 'games', gameId, 'players'), orderBy('score', 'desc')));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+function fillBoard(sel, scores, limit) {
+  const ol = $(sel); ol.innerHTML = '';
+  scores.slice(0, limit).forEach((p, idx) => {
+    const li = document.createElement('li');
+    if (!isHost && p.id === user.uid) li.className = 'me';
+    const n = document.createElement('span'); n.textContent = `${idx + 1}. ${p.name}`;
+    const s = document.createElement('strong'); s.textContent = p.score;
+    li.append(n, s); ol.appendChild(li);
+  });
+}
+
+async function showRanking(i, final) {
+  clearInterval(timerHandle);
+  if (unsubAnswers) { unsubAnswers(); unsubAnswers = null; }
+  await new Promise(r => setTimeout(r, 600)); // letzte Punkte eintreffen lassen
+  const scores = await getScores();
+
+  if (!final) {
+    show('ranking');
+    const q = QUESTIONS[i];
+    $('#reveal').textContent = `Richtige Antwort: ${SHAPES[q.c]} ${q.a[q.c]}`;
+    if (isHost) {
+      $('#feedback').textContent = '';
+      fillBoard('#midBoard', scores, 10);
+    } else {
+      const r = myResult || { correct: false, points: 0 };
+      $('#feedback').textContent = r.correct ? `✅ Richtig! +${r.points} Punkte` : (r.late ? '⏰ Leider zu spät' : '❌ Leider falsch');
+      const rank = scores.findIndex(p => p.id === user.uid) + 1;
+      fillBoard('#midBoard', scores, 5);
+      if (rank > 5) $('#reveal').textContent += ` · Du bist auf Platz ${rank}`;
+    }
+    $('#nextBtn').classList.toggle('hidden', !isHost);
+    $('#nextBtn').textContent = i >= QUESTIONS.length - 1 ? '🎅 Zum Siegerpodest' : 'Nächste Frage ➜';
+    return;
+  }
+
+  show('results');
+  const pod = $('#podium'); pod.innerHTML = '';
+  const medals = ['🥇', '🥈', '🥉'], cls = ['p1', 'p2', 'p3'];
+  [1, 0, 2].forEach(pos => {
+    const p = scores[pos]; if (!p) return;
+    const d = document.createElement('div'); d.className = 'step ' + cls[pos];
+    const m = document.createElement('div'); m.className = 'medal'; m.textContent = medals[pos];
+    const n = document.createElement('div'); n.textContent = p.name;
+    const s = document.createElement('div'); s.textContent = p.score + ' Punkte';
+    d.append(m, n, s); pod.appendChild(d);
+  });
+  fillBoard('#finalBoard', scores, 20);
+}
+
+/* ---------- SCHNEEFALL ---------- */
+for (let i = 0; i < 45; i++) {
+  const f = document.createElement('span');
+  f.className = 'flake';
+  f.textContent = Math.random() > .5 ? '❄' : '•';
+  f.style.left = Math.random() * 100 + 'vw';
+  f.style.fontSize = (8 + Math.random() * 18) + 'px';
+  f.style.animationDuration = (6 + Math.random() * 10) + 's';
+  f.style.animationDelay = (-Math.random() * 15) + 's';
+  $('#snow').appendChild(f);
+}
+
+/* ---------- MUSIK (Jingle Bells, gemeinfrei, im Browser erzeugt) ---------- */
+const FREQ = { C: 523.25, D: 587.33, E: 659.25, F: 698.46, G: 783.99 };
+const MELODY = [['E',1],['E',1],['E',2],['E',1],['E',1],['E',2],['E',1],['G',1],['C',1.5],['D',.5],['E',4],
+                ['F',1],['F',1],['F',1.5],['F',.5],['F',1],['E',1],['E',1],['E',.5],['E',.5],['E',1],['D',1],['D',1],['E',1],['D',2],['G',2]];
+let actx, master, musicOn = false, loopTimer;
+function playLoop() {
+  if (!musicOn) return;
+  const beat = 0.28; let t = actx.currentTime + 0.05;
+  for (const [n, d] of MELODY) {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'triangle'; o.frequency.value = FREQ[n];
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.15, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d * beat * 0.95);
+    o.connect(g).connect(master); o.start(t); o.stop(t + d * beat);
+    t += d * beat;
+  }
+  loopTimer = setTimeout(playLoop, (t - actx.currentTime + 0.8) * 1000);
+}
+$('#musicBtn').onclick = () => {
+  if (!actx) actx = new AudioContext();
+  musicOn = !musicOn;
+  if (musicOn) {
+    master = actx.createGain(); master.gain.value = 0.5; master.connect(actx.destination);
+    actx.resume(); playLoop();
+  } else {
+    clearTimeout(loopTimer); master.disconnect();
+  }
+  $('#musicBtn').textContent = musicOn ? '🔇 Musik aus' : '🎵 Musik an';
+};
+
+/* ---------- Direkteinstieg über Link / QR-Code ---------- */
+const preset = new URLSearchParams(location.search).get('game');
+if (preset) {
+  show('join');
+  $('#joinCode').value = preset.toUpperCase();
+  $('#playerName').value = localStorage.getItem('wq_name') || '';
+  $('#playerName').focus();
+}
+</script>
+</body>
+</html>
